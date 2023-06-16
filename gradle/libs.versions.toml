@@ -1,0 +1,12 @@
+[versions]
+kotlin = "1.8.20"
+asm = "9.4"
+
+[libraries]
+asm-core = { module = "org.ow2.asm:asm", version.ref = "asm" }
+asm-commons = { module = "org.ow2.asm:asm-commons", version.ref = "asm" }
+asm-util = { module = "org.ow2.asm:asm-util", version.ref = "asm" }
+kotlin-reflect = { module = "org.jetbrains.kotlin:kotlin-reflect", version.ref = "kotlin" }
+
+[bundles]
+asm-all = ["asm-core", "asm-commons", "asm-util"]

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN" packages="com.mojang.util,net.minecrell.terminalconsole.util">
+    <Appenders>
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout>
+                <LoggerNamePatternSelector defaultPattern="%style{[%d{HH:mm:ss}]}{blue} %highlight{[%t/%level]}{FATAL=red, ERROR=red, WARN=yellow, INFO=green, DEBUG=green, TRACE=blue} %style{(%logger{1})}{cyan} %highlight{%msg%n}{FATAL=red, ERROR=red, WARN=normal, INFO=normal, DEBUG=normal, TRACE=normal}">
+                    <PatternMatch key="net.minecraft.,com.mojang." pattern="%style{[%d{HH:mm:ss}]}{blue} %highlight{[%t/%level]}{FATAL=red, ERROR=red, WARN=yellow, INFO=green, DEBUG=green, TRACE=blue} %style{(Minecraft)}{cyan} %highlight{%msg{nolookups}%n}{FATAL=red, ERROR=red, WARN=normal, INFO=normal, DEBUG=normal, TRACE=normal}"/>
+                </LoggerNamePatternSelector>
+            </PatternLayout>
+        </Console>
+
+        <RollingRandomAccessFile name="Latest" fileName="logs/latest.log" filePattern="logs/%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout>
+                <LoggerNamePatternSelector defaultPattern="[%d{HH:mm:ss}] [%t/%level] (%logger{1}) %msg{nolookups}%n">
+                    <PatternMatch key="net.minecraft.,com.mojang." pattern="[%d{HH:mm:ss}] [%t/%level] (Minecraft) %msg{nolookups}%n"/>
+                </LoggerNamePatternSelector>
+            </PatternLayout>
+            <Policies>
+                <TimeBasedTriggeringPolicy />
+                <OnStartupTriggeringPolicy />
+            </Policies>
+        </RollingRandomAccessFile>
+    </Appenders>
+
+    <Loggers>
+        <Logger level="info" name="net.minecraft"/>
+        <Root level="all">
+            <AppenderRef ref="Console" level="info"/>
+            <AppenderRef ref="Latest" level="info"/>
+        </Root>
+    </Loggers>
+</Configuration>

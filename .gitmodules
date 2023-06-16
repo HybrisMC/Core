@@ -1,0 +1,3 @@
+[submodule "class-util"]
+	path = class-util
+	url = https://github.com/770grappenmaker/nasty-jvm-util.git
