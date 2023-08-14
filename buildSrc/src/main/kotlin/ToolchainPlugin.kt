@@ -47,7 +47,8 @@ fun RepositoryHandler.spongeMaven() = maven("https://repo.spongepowered.org/repo
 
 private val allModules = mutableListOf<MutableProjectState>()
 fun allMappings() = allModules.associate { it.mcVersionID to it.mappings }
-fun gameJarOf(versionID: String) = getMinecraftDir().resolve("versions").resolve(versionID).resolve("$versionID.jar")
+fun gameJarOf(versionID: String): Path =
+    getMinecraftDir().resolve("versions").resolve(versionID).resolve("$versionID.jar")
 
 abstract class OnCompletion : FlowAction<OnCompletion.Parameters> {
     interface Parameters : FlowParameters {
@@ -199,7 +200,7 @@ class MutableProjectState(private val target: Project) {
 
             workingDir(cache.resolve("game").also { it.createDirectories() })
             mainClass.set("dev.hybrismc.core.MainKt")
-            args(mcVersionID)
+            args(mcVersionID, "--version", mcVersionID)
 
             doFirst {
                 // Make sure to download natives if required
@@ -231,7 +232,7 @@ class MutableProjectState(private val target: Project) {
                     classpath(*buildClasspath().toTypedArray())
                     jvmArgs(
                         "-Dterminal.ansi=true",
-                        "-Djava.library.path=${nativesDir.absolutePathString()}"
+                        "-Djava.library.path=${nativesDir.absolutePathString()}",
                     )
                 }
             }

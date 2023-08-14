@@ -34,6 +34,7 @@ import org.objectweb.asm.ClassWriter
 import org.spongepowered.asm.launch.MixinBootstrap
 import org.spongepowered.asm.mixin.MixinEnvironment
 import org.spongepowered.asm.service.MixinService
+import java.io.InputStream
 import java.net.URL
 import java.net.URLClassLoader
 import java.nio.file.Paths
@@ -95,12 +96,20 @@ fun main(args: Array<String>) {
             ?: error("No tiny mappings on classpath!")).bufferedReader().readLines()
     )
 
-    val gameArgs = arrayOf(
-        "--accessToken", "0",
-        "--version", versionEntry.id,
-        "--assetIndex", versionEntry.assetIndex.id,
-        "--assetsDir", gameDir.resolve("assets").absolutePathString()
-    ) + args.drop(1)
+    val gameArgs = (buildList {
+        fun addArgument(name: String, value: String) {
+            val prefix = "--$name"
+            if (prefix !in args) {
+                add(prefix)
+                add(value)
+            }
+        }
+
+        addArgument("accessToken", "0")
+        addArgument("version", versionEntry.id)
+        addArgument("assetIndex", versionEntry.assetIndex.id)
+        addArgument("assetsDir", gameDir.resolve("assets").absolutePathString())
+    } + args.drop(1)).toTypedArray()
 
     globalGameLoader = GameLoader(
         mappings = mappings,
@@ -153,9 +162,8 @@ class GameLoader(
     )
 
     private val demapper = mappings.asSimpleRemapper("named", "official")
-    private val disallowedPrefixes = setOf(
-        "java.", "javax.", "sun.", "jdk.", "com.sun.management.", "org.xml.", "org.w3c.",
-        "kotlin.", "kotlinx.", "org.objectweb.", "dev.hybrismc.", "com.grappenmaker.", "org.slf4j."
+    private val disallowedReloading = setOf(
+        "dev.hybrismc.", "com.grappenmaker.", "org.slf4j."
     )
 
     private val disallowedInheritance = setOf("org.slf4j.", "com.google.")
@@ -171,7 +179,9 @@ class GameLoader(
 
     override fun loadClass(name: String, resolve: Boolean): Class<*> {
         findLoaded(name)?.let { return it }
-        if (disallowedPrefixes.any { name.startsWith(it) }) return super.loadClass(name, resolve)
+        if (isSystemClass(name) || disallowedReloading.any { name.startsWith(it) }) {
+            return super.loadClass(name, resolve)
+        }
 
         val clazz = findClass(name)
         if (resolve) resolveClass(clazz)
@@ -182,16 +192,21 @@ class GameLoader(
         return when (internalName) {
             !in knownNames -> (getResourceAsStream("$internalName.class") ?: return null).readBytes()
             else -> {
-                val originalName = demapper.map(internalName) ?: internalName
-                val originalBytes = (getResourceAsStream("$originalName.class") ?: return null).readBytes()
-
-                val reader = ClassReader(originalBytes)
-                val writer = ClassWriter(reader, 0)
-                reader.accept(LambdaAwareRemapper(AccessWideningVisitor(writer), remapper), 0)
-
-                writer.toByteArray()
+                remapUnmapped(
+                    (getResourceAsStream(
+                        "${demapper.map(internalName) ?: internalName}.class"
+                    ) ?: return null).readBytes()
+                )
             }
         }
+    }
+
+    private fun remapUnmapped(bytes: ByteArray): ByteArray? {
+        val reader = ClassReader(bytes)
+        val writer = ClassWriter(reader, 0)
+        reader.accept(LambdaAwareRemapper(AccessWideningVisitor(writer), remapper), 0)
+
+        return writer.toByteArray()
     }
 
     fun transform(internalName: String, bytes: ByteArray): ByteArray {
@@ -228,4 +243,12 @@ class GameLoader(
     override fun getResource(name: String): URL? =
         if (name.endsWith(".class") && disallowedInheritance(name.substringBeforeLast('.').replace('/', '.')))
             findResource(name) ?: parent.getResource(name) else super.getResource(name)
+
+    override fun getResourceAsStream(name: String): InputStream? = when {
+        !name.endsWith(".class") -> super.getResourceAsStream(name)
+        else -> {
+            val internalName = name.dropLast(6)
+            super.getResourceAsStream(if (internalName in knownNames) "${demapper.map(internalName)}.class" else name)
+        }
+    }
 }

@@ -67,7 +67,7 @@ data class DirectAccessorData(
         return staticImpl as? T ?: error("Static implementation does not match type?")
     }
 
-    val isLoaded get() = staticImpl != null
+    private val isLoaded get() = staticImpl != null
 
     fun ensureLoaded() {
         if (!isLoaded) targets.firstNotNullOfOrNull { runCatching { loader.loadClass(it) }.getOrNull() }

@@ -20,23 +20,32 @@ package dev.hybrismc.core
 
 import com.grappenmaker.jvmutil.asClassNode
 import com.grappenmaker.jvmutil.internalNameOf
+import com.grappenmaker.jvmutil.isSystemClass
 import dev.hybrismc.meta.MinecraftVersion
 import org.objectweb.asm.tree.AnnotationNode
 import org.objectweb.asm.tree.ClassNode
+import org.spongepowered.asm.launch.MixinBootstrap
 import org.spongepowered.asm.launch.platform.container.IContainerHandle
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.MixinEnvironment
+import org.spongepowered.asm.mixin.Mixins
 import org.spongepowered.asm.mixin.transformer.IMixinTransformer
 import org.spongepowered.asm.mixin.transformer.IMixinTransformerFactory
 import org.spongepowered.asm.service.*
 import org.spongepowered.asm.service.modlauncher.LoggerAdapterLog4j2
 import org.spongepowered.asm.util.Constants
 import org.spongepowered.asm.util.ReEntranceLock
+import java.io.ByteArrayInputStream
+import java.io.File
 import java.io.InputStream
 import java.net.URL
+import java.nio.file.Files
+import java.util.*
+import kotlin.io.path.writeBytes
 
 @Retention
 @Target(AnnotationTarget.CLASS, AnnotationTarget.PROPERTY, AnnotationTarget.FUNCTION, AnnotationTarget.FIELD)
+@Suppress("unused")
 annotation class OnlyOn(vararg val versions: MinecraftVersion)
 
 object GameClassProvider : IClassProvider, IClassBytecodeProvider {
@@ -93,7 +102,7 @@ class HybrisMixinService : IMixinService {
         override fun getNestedContainers() = emptyList<IContainerHandle>()
     }
 
-    override fun getName() = "HybrMixin"
+    override fun getName() = "HybrMixin (in ${javaClass.classLoader})"
     override fun isValid() = true
 
     override fun prepare() {}

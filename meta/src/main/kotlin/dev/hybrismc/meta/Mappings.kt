@@ -105,6 +105,7 @@ data class TinyMappings(
 sealed interface MappingsFormat<T : Mappings> {
     fun detect(lines: List<String>): Boolean
     fun parse(lines: List<String>): T
+    fun write(mappings: T): List<String>
 }
 
 val allMappingsFormats = listOf(TinyMappingsV1Format, TinyMappingsV2Format, SRGMappingsFormat, XSRGMappingsFormat)
@@ -113,6 +114,8 @@ fun loadMappings(lines: List<String>) = allMappingsFormats.find { it.detect(line
 
 object TinyMappingsV1Format : MappingsFormat<TinyMappings> by TinyMappingsFormat(false)
 object TinyMappingsV2Format : MappingsFormat<TinyMappings> by TinyMappingsFormat(true)
+
+fun TinyMappings.write() = (if (isV2) TinyMappingsV2Format else TinyMappingsV1Format).write(this)
 
 class TinyMappingsFormat(private val isV2: Boolean) : MappingsFormat<TinyMappings> {
     // If v1: check if line starts with v1 and all other lines are prefixed correctly
@@ -142,7 +145,7 @@ class TinyMappingsFormat(private val isV2: Boolean) : MappingsFormat<TinyMapping
         return TinyMappings(namespaces, if (isV2) {
             var state: TinyV2State = MappingState()
             mapLines.forEach { state = state.update(it) }
-            state = state.end()
+            repeat(2) { state = state.end() }
 
             (state as? MappingState ?: error("Did not finish walking tree, parsing failed (ended in $state)")).classes
         } else {
@@ -255,7 +258,7 @@ class TinyMappingsFormat(private val isV2: Boolean) : MappingsFormat<TinyMapping
 
         override fun end(): TinyV2State {
             owner.fields += MappedField(names, comments, desc)
-            return owner.end()
+            return owner
         }
     }
 
@@ -295,7 +298,7 @@ class TinyMappingsFormat(private val isV2: Boolean) : MappingsFormat<TinyMapping
 
         override fun end(): TinyV2State {
             owner.methods += MappedMethod(names, comments, desc, parameters, locals)
-            return owner.end()
+            return owner
         }
     }
 
@@ -306,6 +309,40 @@ class TinyMappingsFormat(private val isV2: Boolean) : MappingsFormat<TinyMapping
         windowedSequence(sequence.length, sequence.length).takeWhile { it == sequence }.count()
 
     private fun String.parts() = split('\t')
+    private fun List<String>.indent() = map { "\t" + it }
+    private fun List<String>.join() = joinToString("\t")
+
+    override fun write(mappings: TinyMappings): List<String> {
+        require(mappings.isV2 == isV2) { "tiny mappings versions do not match" }
+
+        val header = (if (isV2) "tiny\t2\t0" else "v1") + "\t${mappings.namespaces.join()}"
+        return listOf(header) + if (!isV2) {
+            val classesPart = mappings.classes.map { "CLASS\t${it.names.join()}" }
+            val methodsPart = mappings.classes.flatMap { c ->
+                c.methods.map {
+                    "METHOD\t${c.names.first()}\t${it.desc}\t${it.names.join()}"
+                }
+            }
+
+            val fieldsPart = mappings.classes.flatMap { c ->
+                c.fields.map {
+                    "FIELD\t${c.names.first()}\t${it.desc}\t${it.names.join()}"
+                }
+            }
+
+            classesPart + methodsPart + fieldsPart
+        } else mappings.classes.flatMap { c ->
+            listOf("c\t${c.names.join()}") + (c.methods.flatMap { m ->
+                listOf("m\t${m.desc}\t${m.names.join()}") + (m.parameters.map {
+                    "p\t${it.index}\t${it.names.join()}"
+                } + m.variables.map {
+                    "v\t${it.index}\t${it.startOffset}\t${it.lvtIndex}\t${it.names.join()}"
+                }).indent()
+            } + c.fields.map {
+                "f\t${it.desc!!}\t${it.names.join()}"
+            }).indent()
+        }
+    }
 }
 
 data class SRGMappings(override val classes: List<MappedClass>, val isExtended: Boolean) : Mappings {
@@ -313,6 +350,7 @@ data class SRGMappings(override val classes: List<MappedClass>, val isExtended: 
 }
 
 fun SRGMappings.asSimpleRemapper() = asSimpleRemapper(namespaces[0], namespaces[1])
+fun SRGMappings.write() = (if (isExtended) XSRGMappingsFormat else SRGMappingsFormat).write(this)
 
 object SRGMappingsFormat : MappingsFormat<SRGMappings> by BasicSRGParser(false)
 object XSRGMappingsFormat : MappingsFormat<SRGMappings> by BasicSRGParser(true)
@@ -375,6 +413,26 @@ private class BasicSRGParser(private val isExtended: Boolean) : MappingsFormat<S
         filter { (t) -> t == "$type:" }
             .groupBy { (_, from) -> from.substringBeforeLast('/') }
             .mapValues { (_, entries) -> entries.map { mapper(it.drop(1)) } }
+
+    override fun write(mappings: SRGMappings): List<String> {
+        require(mappings.isExtended == isExtended) { "Cannot write XSRG as SRG, or SRG as XSRG" }
+
+        val classesPart = mappings.classes.map { "CL: ${it.names.first()} ${it.names.last()}" }
+        val fieldsPart = mappings.classes.flatMap { c ->
+            c.fields.map {
+                val ext = if (isExtended) " ${it.desc}" else ""
+                "FD: ${c.names.first()}/${it.names.first()}$ext ${c.names.last()}/${it.names.last()} ${it.desc}"
+            }
+        }
+
+        val methodsParts = mappings.classes.flatMap { c ->
+            c.methods.map {
+                "MD: ${c.names.first()}/${it.names.first()} ${it.desc} ${c.names.last()}/${it.names.last()} ${it.desc}"
+            }
+        }
+
+        return classesPart + fieldsPart + methodsParts
+    }
 }
 
 class AccessWideningVisitor(parent: ClassVisitor) : ClassVisitor(ASM9, parent) {
@@ -440,9 +498,13 @@ class MappingsRemapper(
     mappings: Mappings,
     from: String,
     to: String,
+    private val shouldRemapDesc: Boolean = mappings.namespaces.indexOf(from) != 0,
     private val loader: (name: String) -> ByteArray?
 ) : Remapper() {
     private val map = mappings.asASMMapping(from, to)
+    private val baseMapper by lazy {
+        MappingsRemapper(mappings, from, mappings.namespaces[0], shouldRemapDesc = false, loader)
+    }
 
     override fun map(internalName: String): String = map[internalName] ?: internalName
 //    override fun mapInnerClassName(name: String, ownerName: String?, innerName: String?) = map(name)
@@ -451,12 +513,13 @@ class MappingsRemapper(
         if (name == "<init>" || name == "<clinit>") return name
 
         // Source: https://github.com/FabricMC/tiny-remapper/blob/d14e8f99800e7f6f222f820bed04732deccf5109/src/main/java/net/fabricmc/tinyremapper/AsmRemapper.java#L74
-        return if (desc.startsWith("(")) walk(owner, name) { map["$it.$name$desc"] }
-        else mapFieldName(owner, name, desc)
+        return if (desc.startsWith("(")) {
+            val actualDesc = if (shouldRemapDesc) baseMapper.mapMethodDesc(desc) else desc
+            walk(owner, name) { map["$it.$name$actualDesc"] }
+        } else mapFieldName(owner, name, desc)
     }
 
     override fun mapFieldName(owner: String, name: String, desc: String) = walk(owner, name) { map["$it.$name"] }
-
     override fun mapRecordComponentName(owner: String, name: String, desc: String) =
         mapFieldName(owner, name, desc)
 
