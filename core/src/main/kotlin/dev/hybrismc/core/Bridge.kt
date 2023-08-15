@@ -99,8 +99,11 @@ interface MinecraftClient {
     val networkProxy: Proxy
 //    val sessionProperties: PropertyMap
 
-    @OmitMissingImplementation
+    @get:OmitMissingImplementation
     val mouse: Any?
+
+    @get:OmitMissingImplementation
+    val window: Window?
 
     interface Static : StaticAccessor<MinecraftClient> {
         val currentFps: Int
@@ -113,6 +116,7 @@ interface MinecraftClient {
     companion object : Static by minecraftClientAccess.static()
 }
 
+val MinecraftClient.actualWindow get() = window ?: Window.construct(this) ?: error("Unknown implementation for window")
 val MinecraftClient.actualMouse get() = mouse as? Mouse
 
 val blockRenderManagerAccess = accessor<_, BlockRenderManager.Static>()
@@ -379,6 +383,9 @@ interface TextRenderer {
     fun mirror(text: String): String
     fun trimToWidth(text: String, width: Int): String
     fun trimToWidth(text: String, width: Int, backwards: Boolean): String
+
+    @OmitMissingImplementation
+    fun draw(text: String, x: Int, y: Int, color: Int): Int
 
     interface Static : StaticAccessor<TextRenderer>
     companion object : Static by textRendererAccess.static()

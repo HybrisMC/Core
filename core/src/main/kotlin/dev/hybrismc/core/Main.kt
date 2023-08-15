@@ -31,6 +31,7 @@ import io.ktor.utils.io.*
 import kotlinx.coroutines.*
 import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassWriter
+import org.slf4j.LoggerFactory
 import org.spongepowered.asm.launch.MixinBootstrap
 import org.spongepowered.asm.mixin.MixinEnvironment
 import org.spongepowered.asm.service.MixinService
@@ -39,6 +40,7 @@ import java.net.URL
 import java.net.URLClassLoader
 import java.nio.file.Paths
 import kotlin.io.path.*
+import kotlin.system.measureTimeMillis
 
 lateinit var globalGameLoader: GameLoader
 lateinit var globalAccessorRegistry: AccessorRegistry
@@ -48,7 +50,6 @@ val mixinService
     get() = MixinService.getService() as? HybrisMixinService ?: error("Mixin service initialized incorrectly!")
 
 val http = createDefaultHTTP()
-private fun String.log() = println("[Hybris Bootstrap] $this")
 
 object CurrentVersion {
     lateinit var minecraftVersion: MinecraftVersion
@@ -59,6 +60,9 @@ object CurrentVersion {
 }
 
 fun main(args: Array<String>) {
+    val logger = LoggerFactory.getLogger("HybrisBootstrap")
+    fun String.log() = logger.info(this)
+
     "Hybris Core version ${CurrentVersion.coreVersion}".log()
 
     val version = args.firstOrNull() ?: error("Specify a version!")
@@ -96,6 +100,8 @@ fun main(args: Array<String>) {
             ?: error("No tiny mappings on classpath!")).bufferedReader().readLines()
     )
 
+    "Found ${mappings.classes.size} mappable classes (using ${mappings.javaClass.simpleName})".log()
+
     val gameArgs = (buildList {
         fun addArgument(name: String, value: String) {
             val prefix = "--$name"
@@ -123,27 +129,29 @@ fun main(args: Array<String>) {
     "Initializing code generators".log()
     initBridge()
     initScreen()
-
-    // Patch game to not break stack traces / crash reports
-    findMinecraftClass {
-        strings hasPartial "Stacktrace:"
-        methods {
-            "firstTwoElementsOfStackTraceMatch" {
-                method calls { method named "getFileName" }
-                transform {
-                    replaceCall(
-                        matcher = { it.name == "getFileName" },
-                        replacement = { pop(); loadConstant("") }
-                    )
-                }
-            }
-        }
-    }
+    initGLCompat()
+    applyGlobalPatches()
 
     "Initializing Mixin".log()
     MixinBootstrap.init()
 
-    "Launching game".log()
+    "Took ${
+        measureTimeMillis {
+            "Preloading Minecraft classes".log()
+            val (success, failed) = mappings.classes.partition {
+                runCatching {
+                    globalGameLoader.loadClass(it.names[mappings.namespace("named")].replace('/', '.'))
+                }.isSuccess
+            }
+
+            "Successfully preloaded ${success.size} classes, ${failed.size} classes were not found".log()
+        }
+    }ms to preload classes".log()
+
+    "Initializing version adapter".log()
+    currentVersionAdapter?.preLaunch()
+
+    "Launching game with args \"${gameArgs.joinToString(" ")}\"".log()
     globalGameLoader.loadClass(versionEntry.mainClass).getMethod("main", Array<String>::class.java)(null, gameArgs)
 }
 

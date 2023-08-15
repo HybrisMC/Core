@@ -53,7 +53,6 @@ private val minecraftScreenBridge by lazy {
         extends = target.name,
         access = Opcodes.ACC_PUBLIC,
         defaultConstructor = false,
-        debug = true
     ) {
         visitField(delegateField)
         generateMethod("<init>", "(${delegateField.descriptor}L${internalNameOf<TextComponent>()};)V") {
@@ -206,4 +205,20 @@ interface Mouse {
 
     interface Static : StaticAccessor<Mouse>
     companion object : Static by mouseAccess.static()
+}
+
+val windowAccess = accessor<_, Window.Static>()
+
+@Named("net/minecraft/client/util/Window")
+interface Window {
+    val width: Int
+    val height: Int
+
+    interface Static : StaticAccessor<Window> {
+        @OmitMissingImplementation
+        @ConstructorAccess
+        fun construct(client: MinecraftClient): Window?
+    }
+
+    companion object : Static by windowAccess.static()
 }

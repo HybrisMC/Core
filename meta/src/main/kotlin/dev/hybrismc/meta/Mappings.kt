@@ -564,7 +564,8 @@ fun remapJar(
                 out.write(bytes)
             }
 
-            resources.forEach { write(it.name, jar.getInputStream(it).readBytes()) }
+            resources.filterNot { it.name.endsWith(".RSA") || it.name.endsWith(".SF") }
+                .forEach { write(it.name, jar.getInputStream(it).readBytes()) }
 
             val cache = hashMapOf<String, ByteArray?>()
             val remapper = MappingsRemapper(

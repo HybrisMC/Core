@@ -18,55 +18,9 @@
 
 package dev.hybrismc.meta
 
-import io.ktor.client.*
-import io.ktor.client.call.*
-import io.ktor.client.engine.cio.*
-import io.ktor.client.plugins.contentnegotiation.*
-import io.ktor.client.plugins.logging.*
-import io.ktor.client.request.*
-import io.ktor.client.statement.*
-import io.ktor.network.util.*
-import io.ktor.serialization.kotlinx.json.*
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import java.nio.channels.Channels
 import java.nio.file.Path
 import java.nio.file.Paths
-import kotlin.io.path.createDirectories
-import kotlin.io.path.outputStream
-
-suspend inline fun <reified T : Any> HttpClient.fetch(url: String) = get(url).body<T>()
-
-suspend fun HttpClient.fetchVersionManifest(): VersionManifest =
-    fetch("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")
-
-suspend fun HttpClient.fetchVersion(version: String): VersionEntry? {
-    val versionManifest = fetchVersionManifest()
-    val versionInfo = versionManifest.versions.find { it.id == version } ?: return null
-    return fetch(versionInfo.url)
-}
-
-suspend fun HttpClient.download(url: String, target: Path) = prepareGet(url).execute { res ->
-    val channel = res.bodyAsChannel()
-    val buf = DefaultByteBufferPool.borrow()
-
-    target.parent.createDirectories()
-    Channels.newChannel(target.outputStream()).use { out ->
-        try {
-            while (!channel.isClosedForRead) {
-                channel.readAvailable(buf)
-                buf.flip()
-                out.write(buf)
-                buf.rewind()
-            }
-        } finally {
-            DefaultByteBufferPool.recycle(buf)
-        }
-    }
-}
 
 @Serializable
 data class VersionManifest(val latest: LatestInfo, val versions: List<VersionInfo>)
@@ -200,24 +154,6 @@ fun osIdentifier() = with(System.getProperty("os.name")) {
         startsWith("Windows") -> "windows"
         else -> error("Unsupported platform")
     }
-}
-
-fun HttpClient.downloadAll(files: List<Pair<LibraryArtifact, Path>>) {
-    runBlocking {
-        files.map { (artifact, target) ->
-            async {
-                println("Downloading ${artifact.path} from ${artifact.url}...")
-                download(artifact.url, target)
-                println("Done downloading ${artifact.path}")
-            }
-        }.awaitAll()
-    }
-}
-
-fun createDefaultHTTP(block: HttpClientConfig<*>.() -> Unit = {}) = HttpClient(CIO) {
-    install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
-    engine { requestTimeout = 0 }
-    block()
 }
 
 enum class MinecraftVersion(val id: String) {

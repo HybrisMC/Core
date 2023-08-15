@@ -29,13 +29,28 @@ import java.lang.reflect.Modifier
 import kotlin.reflect.full.findAnnotation
 
 @Retention
-@Target(AnnotationTarget.CLASS, AnnotationTarget.FIELD, AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
+@Target(
+    AnnotationTarget.CLASS,
+    AnnotationTarget.FIELD,
+    AnnotationTarget.FUNCTION,
+    AnnotationTarget.PROPERTY_GETTER,
+    AnnotationTarget.PROPERTY_SETTER
+)
 annotation class Named(vararg val names: String)
 
 // Allow using an annotation to declare to not implement a method when the implementation is missing
 @Retention
-@Target(AnnotationTarget.FIELD, AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
+@Target(
+    AnnotationTarget.FIELD,
+    AnnotationTarget.FUNCTION,
+    AnnotationTarget.PROPERTY_GETTER,
+    AnnotationTarget.PROPERTY_SETTER
+)
 annotation class OmitMissingImplementation
+
+@Retention
+@Target(AnnotationTarget.CLASS)
+annotation class OmitAllMissing
 
 // Annotation that specfies a method is a ctor
 @Retention
@@ -175,15 +190,20 @@ data class DirectAccessorData(
                 ?: potentialMethod?.let { MethodImplementation(receiverMethod, it) }
                 ?: if (allowNotImplemented) NotImplementedImplementation(
                     receiverMethod,
-                    throwException = !receiverMethod.isAnnotationPresent(OmitMissingImplementation::class.java)
+                    throwException = !(receiverMethod.isAnnotationPresent(OmitMissingImplementation::class.java) ||
+                            virtualType.isAnnotationPresent(OmitAllMissing::class.java))
                 ) else error(
                     "No implementation was found for $receiverMethod (${Type.getMethodDescriptor(receiverMethod)})"
                 )
         }
 
-    private fun ClassVisitor.generateImpl(impl: DirectAccessorImplementation, basedOn: ClassNode, static: Boolean = false) {
+    private fun ClassVisitor.generateImpl(
+        impl: DirectAccessorImplementation,
+        basedOn: ClassNode,
+        static: Boolean = false
+    ) {
         val (name, desc) = impl.receiverMethod.asDescription()
-        if (!static && basedOn.methods.any { it.name == name && it.desc == desc }) return
+//        if (!static && basedOn.methods.any { it.name == name && it.desc == desc }) return
 
         generateMethod(name, desc, access = ACC_PUBLIC or if (!static && basedOn.isInterface) 0 else ACC_FINAL) {
             when (impl) {
@@ -198,9 +218,8 @@ data class DirectAccessorData(
     private fun implementVirtual(node: ClassNode) {
         // Only for virtual, static has *freedom*
         val toImplement = virtualType.selectImplementations(node, false).filterNot { impl ->
-            val type = Type.getType(impl.receiverMethod)
-            val args = type.argumentTypes.toList()
-            node.methods.any { it.name == impl.receiverMethod.name && it.arguments.toList() == args }
+            val desc = Type.getMethodDescriptor(impl.receiverMethod)
+            node.methods.any { it.name == impl.receiverMethod.name && it.desc == desc }
         }
 
         // Can safely assume the interface will be there

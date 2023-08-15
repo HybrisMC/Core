@@ -9,7 +9,7 @@ repositories {
 
 dependencies {
     implementation("dev.hybrismc:meta")
-    implementation("com.grappenmaker:nasty-jvm-util") {
+    api("com.grappenmaker:nasty-jvm-util") {
         capabilities {
             requireCapability("com.grappenmaker:nasty-jvm-util-reflect")
         }
@@ -28,6 +28,9 @@ dependencies {
     api("org.spongepowered:mixin:0.8.5")
     implementation("com.google.guava:guava:31.0-jre")
     implementation("com.google.code.gson:gson:2.10.1")
+
+    implementation("net.java.jinput:jinput:2.0.9")
+    implementation("net.java.jinput:jinput:2.0.9:natives-all")
 }
 
 tasks {

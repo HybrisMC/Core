@@ -34,9 +34,13 @@ import org.gradle.api.tasks.JavaExec
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.jvm.toolchain.JavaToolchainService
 import org.gradle.kotlin.dsl.*
+import org.gradle.kotlin.dsl.support.useToRun
 import java.io.File
 import java.nio.file.Path
 import java.security.MessageDigest
+import java.util.jar.JarEntry
+import java.util.jar.JarFile
+import java.util.jar.JarOutputStream
 import java.util.zip.ZipFile
 import javax.inject.Inject
 import kotlin.io.path.*
@@ -177,6 +181,37 @@ class MutableProjectState(private val target: Project) {
             }
         }
 
+        target.tasks.register("createBundled") {
+            val target = cache.resolve("${mapOutput.nameWithoutExtension}-bundled.jar")
+            val files = versionMeta.relevantLibraries
+                .composeDownloads(getMinecraftDir().resolve("libraries"))
+                .map { it.second }
+                .filter { it.extension == "jar" }.plusElement(mapOutput)
+
+            val missing = files.filterNot { it.exists() }
+            if (missing.isNotEmpty()) throw GradleException("${missing.joinToString()} missing! Cannot bundle")
+
+            JarOutputStream(target.outputStream()).use { out ->
+                val seen = hashSetOf<String>()
+                val manifest = "META-INF/MANIFEST.MF"
+
+                files.forEach { path ->
+                    JarFile(path.toFile()).useToRun {
+                        entries().asSequence().filter { manifest != it.name && seen.add(it.name) }.forEach { e ->
+                            out.putNextEntry(e)
+                            out.write(getInputStream(e).readBytes())
+                        }
+                    }
+                }
+
+                out.putNextEntry(JarEntry(manifest))
+                out.write(("""
+                    Manifest-Version: 1
+                    Main-Class: net.minecraft.client.main.Main
+                """.trimIndent() + "\n").encodeToByteArray())
+            }
+        }
+
         target.tasks.register<JavaExec>("launchGame") {
             val toolchains = target.extensions.getByType<JavaToolchainService>()
             val java = target.extensions.getByType<JavaPluginExtension>()
@@ -200,7 +235,10 @@ class MutableProjectState(private val target: Project) {
 
             workingDir(cache.resolve("game").also { it.createDirectories() })
             mainClass.set("dev.hybrismc.core.MainKt")
-            args(mcVersionID, "--version", mcVersionID)
+            args(
+                 mcVersionID, "--version", mcVersionID,
+                *(project.findProperty("extraArgs") as? String ?: "").split(";").toTypedArray()
+            )
 
             doFirst {
                 // Make sure to download natives if required
