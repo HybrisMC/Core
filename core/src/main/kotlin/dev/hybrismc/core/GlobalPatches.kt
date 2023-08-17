@@ -19,6 +19,7 @@
 package dev.hybrismc.core
 
 import com.grappenmaker.jvmutil.*
+import dev.hybrismc.meta.MinecraftVersion
 import net.java.games.input.ControllerEnvironment
 import net.java.games.input.Mouse
 import org.objectweb.asm.Opcodes
@@ -53,7 +54,7 @@ fun applyGlobalPatches() {
                 method.isConstructor()
                 transform {
                     methodExit {
-                        getObject<RawInputThread>()
+                        getObject<MouseInputThread>()
                         invokeMethod(Thread::start)
                     }
                 }
@@ -72,22 +73,24 @@ fun applyGlobalPatches() {
                         }
                     )
 
-                    replaceMouseCall("getDX", RawInputThread::dx)
-                    replaceMouseCall("getDY", RawInputThread::dy)
+                    replaceMouseCall("getDX", MouseInputThread::dx)
+                    replaceMouseCall("getDY", MouseInputThread::dy)
                 }
             }
 
             "setGrabbed" {
                 matchMouseCall("setGrabbed")
                 method references { field isType Type.INT_TYPE }
-                transform { methodExit { invokeMethod(RawInputThread::resetMouse) } }
+                transform { methodExit { invokeMethod(MouseInputThread::resetMouse) } }
             }
         }
     }
 
     findNamedClass("net/minecraft/client/MinecraftClient") {
         methods {
-            namedTransform("initializeGame") {
+            namedTransform(
+                if (CurrentVersion.minecraftVersion >= MinecraftVersion.V1_16_1) "<init>" else "initializeGame"
+            ) {
                 methodExit(Opcodes.RETURN) { invokeMethod(::testMixin) }
             }
         }
@@ -95,18 +98,24 @@ fun applyGlobalPatches() {
 }
 
 fun testMixin() {
-    MinecraftClient.instance.setScreen(TestScreen().asMinecraftScreen())
+    MinecraftClient.instance.setScreen(TestScreen(MinecraftClient.instance.currentScreen).asMinecraftScreen())
 }
 
-class TestScreen : CustomScreen {
+class TestScreen(private val parent: Screen?) : CustomScreen {
+    private val openTime = System.currentTimeMillis()
+
     override fun render(mouseX: Int, mouseY: Int, delta: Float) {
+        if (System.currentTimeMillis() - openTime > 10000) {
+            MinecraftClient.instance.setScreen(parent ?: error("Ouch"))
+        }
+
         GLCompat.glClearColor(0f, 0f, 0f, 0f)
         GLCompat.glClear(GLConstants.GL_COLOR_BUFFER_BIT)
         MinecraftClient.instance.textRenderer.draw("Here!", mouseX, mouseY, 0xFFFFFF)
     }
 }
 
-object RawInputThread : Thread("MouseInputThread") {
+object MouseInputThread : Thread("MouseInputThread") {
     init {
         isDaemon = true
     }

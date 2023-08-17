@@ -116,7 +116,7 @@ interface MinecraftClient {
     companion object : Static by minecraftClientAccess.static()
 }
 
-val MinecraftClient.actualWindow get() = window ?: Window.construct(this) ?: error("Unknown implementation for window")
+val MinecraftClient.actualWindow get() = window ?: Window(this) ?: error("Unknown implementation for window")
 val MinecraftClient.actualMouse get() = mouse as? Mouse
 
 val blockRenderManagerAccess = accessor<_, BlockRenderManager.Static>()
@@ -416,10 +416,10 @@ interface Identifier {
 
     interface Static : StaticAccessor<Identifier> {
         @ConstructorAccess
-        fun construct(name: String): Identifier
+        operator fun invoke(name: String): Identifier
 
         @ConstructorAccess
-        fun construct(namespace: String, path: String): Identifier
+        operator fun invoke(namespace: String, path: String): Identifier
     }
 
     companion object : Static by identifierAccess.static()
@@ -611,7 +611,7 @@ interface Vec3i {
         val ZERO: Vec3i
 
         @ConstructorAccess
-        fun construct(x: Int, y: Int, z: Int): Vec3i
+        operator fun invoke(x: Int, y: Int, z: Int): Vec3i
     }
 
     companion object : Static by vec3iAccess.static()
@@ -635,7 +635,7 @@ interface BlockPos : Vec3i {
         val SIZE_BITS_Z: Int
 
         @ConstructorAccess
-        fun construct(x: Int, y: Int, z: Int): BlockPos
+        operator fun invoke(x: Int, y: Int, z: Int): BlockPos
     }
 
     companion object : Static by blockPosAccess.static()
@@ -702,11 +702,10 @@ val gameProfileAccess = accessor<_, GameProfile.Static>()
 interface GameProfile {
     val id: UUID?
     val name: String?
-//    val properties: PropertyMap
 
     interface Static : StaticAccessor<GameProfile> {
         @ConstructorAccess
-        fun construct(uuid: UUID, name: String): GameProfile
+        operator fun invoke(uuid: UUID, name: String): GameProfile
     }
 
     companion object : Static by gameProfileAccess.static()
@@ -722,7 +721,7 @@ interface GameProfileProperty {
 
     interface Static : StaticAccessor<GameProfileProperty> {
         @ConstructorAccess
-        fun construct(name: String, value: String, signature: String?)
+        operator fun invoke(name: String, value: String, signature: String?)
     }
 
     companion object : Static by gameProfilePropertyAccess.static()
@@ -1105,7 +1104,7 @@ interface ServerNetworkIo {
 
     interface Static : StaticAccessor<ServerNetworkIo> {
         @ConstructorAccess
-        fun construct(server: MinecraftServer)
+        operator fun invoke(server: MinecraftServer)
     }
 
     companion object : Static by serverNetworkIoAccess.static()

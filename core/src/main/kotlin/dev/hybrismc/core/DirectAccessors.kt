@@ -86,7 +86,7 @@ data class DirectAccessorData(
 
     fun ensureLoaded() {
         if (!isLoaded) targets.firstNotNullOfOrNull { runCatching { loader.loadClass(it) }.getOrNull() }
-        assert(staticImpl != null)
+        require(staticImpl != null) { "Accessor for $targets was not successfully loaded" }
     }
 
     private fun MethodVisitor.returnCasting(returnType: Type) {

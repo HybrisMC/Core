@@ -134,5 +134,5 @@ fun loadShader(name: String) = ShaderProgram(
     vertex = LoaderDummy::class.java.classLoader.getResourceAsStream("$name.vert")?.readBytes()?.decodeToString()
         ?: error("Vertex shader $name.vert has not been found on the classpath!"),
     fragment = LoaderDummy::class.java.classLoader.getResourceAsStream("$name.frag")?.readBytes()?.decodeToString()
-        ?: error("Vertex shader $name.frag has not been found on the classpath!")
+        ?: error("Fragment shader $name.frag has not been found on the classpath!")
 )

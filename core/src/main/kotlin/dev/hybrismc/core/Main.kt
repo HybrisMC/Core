@@ -148,6 +148,11 @@ fun main(args: Array<String>) {
         }
     }ms to preload classes".log()
 
+    "Attempting to preload ${DirectAccessors.accessorData.size} accessors".log()
+    "Successfully preloaded ${
+        DirectAccessors.accessorData.count { runCatching { it.ensureLoaded() }.isSuccess }
+    } accessors".log()
+
     "Initializing version adapter".log()
     currentVersionAdapter?.preLaunch()
 

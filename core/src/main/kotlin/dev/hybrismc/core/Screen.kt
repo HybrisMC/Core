@@ -217,7 +217,7 @@ interface Window {
     interface Static : StaticAccessor<Window> {
         @OmitMissingImplementation
         @ConstructorAccess
-        fun construct(client: MinecraftClient): Window?
+        operator fun invoke(client: MinecraftClient): Window?
     }
 
     companion object : Static by windowAccess.static()
