@@ -76,6 +76,8 @@ sealed interface Mappings {
     val classes: List<MappedClass>
 }
 
+data class GenericMappings(override val namespaces: List<String>, override val classes: List<MappedClass>) : Mappings
+
 fun Mappings.namespace(name: String) = namespaces.indexOf(name).also { if (it == -1) error("Invalid namespace $name") }
 fun Mappings.asSimpleRemapper(from: String, to: String) = SimpleRemapper(asASMMapping(from, to))
 
@@ -117,8 +119,8 @@ val allMappingsFormats = listOf(
 fun loadMappings(lines: List<String>) = allMappingsFormats.find { it.detect(lines) }?.parse(lines)
     ?: error("No format was found for mappings")
 
-object TinyMappingsV1Format : MappingsFormat<TinyMappings> by TinyMappingsFormat(false)
-object TinyMappingsV2Format : MappingsFormat<TinyMappings> by TinyMappingsFormat(true)
+data object TinyMappingsV1Format : MappingsFormat<TinyMappings> by TinyMappingsFormat(false)
+data object TinyMappingsV2Format : MappingsFormat<TinyMappings> by TinyMappingsFormat(true)
 
 fun TinyMappings.write() = (if (isV2) TinyMappingsV2Format else TinyMappingsV1Format).write(this)
 
@@ -357,8 +359,8 @@ data class SRGMappings(override val classes: List<MappedClass>, val isExtended: 
 fun SRGMappings.asSimpleRemapper() = asSimpleRemapper(namespaces[0], namespaces[1])
 fun SRGMappings.write() = (if (isExtended) XSRGMappingsFormat else SRGMappingsFormat).write(this)
 
-object SRGMappingsFormat : MappingsFormat<SRGMappings> by BasicSRGParser(false)
-object XSRGMappingsFormat : MappingsFormat<SRGMappings> by BasicSRGParser(true)
+data object SRGMappingsFormat : MappingsFormat<SRGMappings> by BasicSRGParser(false)
+data object XSRGMappingsFormat : MappingsFormat<SRGMappings> by BasicSRGParser(true)
 
 private class BasicSRGParser(private val isExtended: Boolean) : MappingsFormat<SRGMappings> {
     private val entryTypes = setOf("CL", "FD", "MD", "PK")
@@ -446,7 +448,7 @@ data class ProguardMappings(override val classes: List<MappedClass>) : Mappings 
 
 fun ProguardMappings.write() = ProguardMappingsFormat.write(this)
 
-object ProguardMappingsFormat : MappingsFormat<ProguardMappings> {
+data object ProguardMappingsFormat : MappingsFormat<ProguardMappings> {
     private val testRegex = """^(\w|\.)+ -> (\w|\.)+:$""".toRegex()
     private const val indent = "    "
 
@@ -486,8 +488,10 @@ object ProguardMappingsFormat : MappingsFormat<ProguardMappings> {
         lines.filterNot { it.startsWith('#') }.forEach { state = state.update(it) }
         state = state.end()
 
-        return ProguardMappings((state as? MappingState
-            ?: error("Did not finish walking tree, parsing failed (ended in $state)")).classes)
+        return ProguardMappings(
+            (state as? MappingState
+                ?: error("Did not finish walking tree, parsing failed (ended in $state)")).classes
+        )
     }
 
     private sealed interface ProguardState {
@@ -632,9 +636,9 @@ class LambdaAwareRemapper(parent: ClassVisitor, remapper: Remapper) : ClassRemap
 }
 
 class MappingsRemapper(
-    mappings: Mappings,
-    from: String,
-    to: String,
+    private val mappings: Mappings,
+    private val from: String,
+    private val to: String,
     private val shouldRemapDesc: Boolean = mappings.namespaces.indexOf(from) != 0,
     private val loader: (name: String) -> ByteArray?
 ) : Remapper() {
@@ -683,6 +687,9 @@ class MappingsRemapper(
 
         return name
     }
+
+    fun reverse(loader: (name: String) -> ByteArray? = this.loader) =
+        MappingsRemapper(mappings, to, from, loader = loader)
 }
 
 fun remapJar(
@@ -690,8 +697,16 @@ fun remapJar(
     input: File,
     output: File,
     from: String = "official",
-    to: String = "named"
+    to: String = "named",
+    classpath: List<File> = listOf(),
 ) {
+    val cache = hashMapOf<String, ByteArray?>()
+    val jarsToUse = (classpath + input).map { JarFile(it) }
+    val lookup = jarsToUse.flatMap { j ->
+        j.entries().asSequence().filter { it.name.endsWith(".class") }
+            .map { it.name.dropLast(6) to { j.getInputStream(it).readBytes() } }
+    }.toMap()
+
     JarFile(input).use { jar ->
         JarOutputStream(output.outputStream()).use { out ->
             val (classes, resources) = jar.entries().asSequence().partition { it.name.endsWith(".class") }
@@ -704,12 +719,9 @@ fun remapJar(
             resources.filterNot { it.name.endsWith(".RSA") || it.name.endsWith(".SF") }
                 .forEach { write(it.name, jar.getInputStream(it).readBytes()) }
 
-            val cache = hashMapOf<String, ByteArray?>()
             val remapper = MappingsRemapper(
                 mappings, from, to,
-                loader = { name ->
-                    cache.getOrPut(name) { jar.getJarEntry("$name.class")?.let { jar.getInputStream(it).readBytes() } }
-                }
+                loader = { name -> if (name in lookup) cache.getOrPut(name) { lookup.getValue(name)() } else null }
             )
 
             classes.forEach { entry ->
@@ -720,5 +732,208 @@ fun remapJar(
                 write("${remapper.map(reader.className)}.class", writer.toByteArray())
             }
         }
+    }
+
+    jarsToUse.forEach { it.close() }
+}
+
+fun Mappings.extractNamespaces(from: String, to: String): Mappings {
+    val fromIndex = namespace(from)
+    val toIndex = namespace(to)
+    val remapper = MappingsRemapper(this, namespaces.first(), from, shouldRemapDesc = false) { null }
+
+    return GenericMappings(
+        namespaces = listOf(from, to),
+        classes = classes.map { c ->
+            c.copy(
+                names = listOf(c.names[fromIndex], c.names[toIndex]),
+                fields = c.fields.map {
+                    it.copy(
+                        names = listOf(it.names[fromIndex], it.names[toIndex]),
+                        desc = remapper.mapDesc(it.desc)
+                    )
+                },
+                methods = c.methods.map {
+                    it.copy(
+                        names = listOf(it.names[fromIndex], it.names[toIndex]),
+                        desc = remapper.mapMethodDesc(it.desc)
+                    )
+                }
+            )
+        }
+    )
+}
+
+fun Mappings.renameNamespaces(to: List<String>): Mappings {
+    require(to.size == namespaces.size) { "namespace length does not match" }
+    return GenericMappings(to, classes)
+}
+
+fun Mappings.renameNamespaces(vararg to: String) = renameNamespaces(to.toList())
+
+fun Mappings.reorderNamespaces(vararg order: String) = reorderNamespaces(order.toList())
+
+fun Mappings.reorderNamespaces(order: List<String>): Mappings {
+    require(order.size == namespaces.size) { "namespace length does not match" }
+
+    val indices = order.map {
+        namespaces.indexOf(it).also { i ->
+            require(i != -1) { "Namespace $it missing in namespaces: $namespaces" }
+        }
+    }
+
+    val remapper = MappingsRemapper(this, namespaces.first(), order.first()) { null }
+
+    return GenericMappings(
+        namespaces = order,
+        classes = classes.map { c ->
+            c.copy(
+                names = indices.map { c.names[it] },
+                fields = c.fields.map { f ->
+                    f.copy(
+                        names = indices.map { f.names[it] },
+                        desc = remapper.mapDesc(f.desc)
+                    )
+                },
+                methods = c.methods.map { m ->
+                    m.copy(
+                        names = indices.map { m.names[it] },
+                        desc = remapper.mapMethodDesc(m.desc)
+                    )
+                },
+            )
+        },
+    )
+}
+
+fun Mappings.join(
+    namespace: String,
+    otherMappings: Mappings,
+    otherNamespace: String,
+    intermediateNamespace: String
+): Mappings {
+    val firstId = namespace(namespace)
+    val firstIntermediaryId = namespace(intermediateNamespace)
+    val secondIntermediaryId = otherMappings.namespace(intermediateNamespace)
+    val secondId = otherMappings.namespace(otherNamespace)
+    val bySecondName = otherMappings.classes.associateBy { it.names[secondIntermediaryId] }
+
+    return GenericMappings(
+        namespaces = listOf(namespace, intermediateNamespace, otherNamespace),
+        classes = classes.map { originalClass ->
+            val intermediateName = originalClass.names[firstIntermediaryId]
+            val matching = bySecondName[intermediateName]
+                ?: error("No matching class found for ${originalClass.names}!")
+
+            val fieldsByName = matching.fields.associateBy { it.names[firstIntermediaryId] }
+            val methodsByName = matching.methods.associateBy { it.names[firstIntermediaryId] }
+
+            MappedClass(
+                names = listOf(originalClass.names[firstId], intermediateName, matching.names[secondId]),
+                comments = originalClass.comments + matching.comments,
+                fields = originalClass.fields.map {
+                    val intermediateFieldName = it.names[firstIntermediaryId]
+                    val matchingField = fieldsByName[intermediateFieldName]
+                        ?: error("No matching field found for ${it.names}!")
+
+                    it.copy(
+                        names = listOf(it.names[firstId], intermediateFieldName, matchingField.names[secondId]),
+                        comments = it.comments + matchingField.comments,
+                    )
+                },
+                methods = originalClass.methods.map {
+                    val intermediateMethodName = it.names[firstIntermediaryId]
+                    val matchingMethod = methodsByName[intermediateMethodName]
+                        ?: error("No matching method found for ${it.names}!")
+
+                    it.copy(
+                        names = listOf(it.names[firstId], intermediateMethodName, matchingMethod.names[secondId]),
+                        comments = it.comments + matchingMethod.comments,
+                    )
+                }
+            )
+        }
+    )
+}
+
+fun Mappings.asSRGMappings(extended: Boolean): SRGMappings {
+    require(namespaces.size == 2) { "mappings to convert to SRG should contain 2 namespaces!" }
+    return SRGMappings(classes, extended)
+}
+
+fun Mappings.asProguardMappings(): ProguardMappings {
+    require(namespaces.size == 2) { "mappings to convert to Proguard mappings should contain 2 namespaces!" }
+    return ProguardMappings(classes)
+}
+
+fun Mappings.asTinyMappings(v2: Boolean) = TinyMappings(namespaces, classes, v2)
+
+class MixinRemapperVisitor(parent: ClassVisitor, private val remapper: Remapper) : ClassVisitor(ASM9, parent) {
+    private val mixinPackage = "org/spongepowered/asm/mixin"
+    private val mixinAnnotation = "$mixinPackage/Mixin"
+
+    private val overwriteAnnotation = "$mixinPackage/Overwrite"
+    private val shadowAnnotation = "$mixinPackage/Shadow"
+    private val accessorAnnotation = "$mixinPackage/gen/Accessor"
+    private val implementsAnnotation = "$mixinPackage/Implements"
+    private val invokerAnnotation = "$mixinPackage/gen/Invoker"
+    private val atAnnotation = "$mixinPackage/injection/At"
+    private val descAnnotation = "$mixinPackage/injection/Desc"
+    private val injectAnnotation = "$mixinPackage/injection/Inject"
+    private val modifyArgAnnotation = "$mixinPackage/injection/ModifyArg"
+    private val modifyArgsAnnotation = "$mixinPackage/injection/ModifyArgs"
+    private val modifyConstantAnnotation = "$mixinPackage/injection/ModifyConstant"
+    private val modifyVariableAnnotation = "$mixinPackage/injection/ModifyVariable"
+    private val redirectAnnotation = "$mixinPackage/injection/Redirect"
+    private val sliceAnnotation = "$mixinPackage/injection/Slice"
+
+    private val allTargets = mutableListOf<String>()
+
+    override fun visitAnnotation(descriptor: String, visible: Boolean): AnnotationVisitor {
+        val parent = super.visitAnnotation(descriptor, visible)
+        return if (descriptor == mixinAnnotation) MixinAnnotationVisitor(parent) else parent
+    }
+
+    override fun visitMethod(
+        access: Int,
+        name: String,
+        descriptor: String,
+        signature: String?,
+        exceptions: Array<String>?
+    ) = MixinMethodVisitor(super.visitMethod(access, name, descriptor, signature, exceptions))
+
+    inner class MixinAnnotationVisitor(parent: AnnotationVisitor) : AnnotationVisitor(ASM9, parent) {
+        override fun visit(name: String, value: Any?) = super.visit(name, when (name) {
+            "value" -> (value as Array<*>).filterIsInstance<Type>()
+                .map { Type.getObjectType(remapper.map(it.internalName)) }.toTypedArray()
+            "targets" -> (value as Array<*>).filterIsInstance<String>()
+                .map { remapper.map(it.replace('.', '/')).replace('/', '.') }.toTypedArray()
+            else -> value
+        })
+
+        override fun visitArray(name: String) = TargetVisitor(super.visitArray(name), name)
+
+        inner class TargetVisitor(
+            parent: AnnotationVisitor,
+            private val name: String
+        ) : AnnotationVisitor(ASM9, parent) {
+            private val buffer = mutableListOf<Any?>()
+
+            override fun visit(name: String, value: Any?) {
+                buffer += value
+                when (value) {
+                    is Type -> allTargets += value.internalName
+                    is String -> allTargets += value.replace('.', '/')
+                }
+            }
+
+            override fun visitEnd() {
+                this@MixinAnnotationVisitor.visit(name, buffer.toTypedArray())
+            }
+        }
+    }
+
+    inner class MixinMethodVisitor(parent: MethodVisitor) : MethodVisitor(ASM9, parent) {
+
     }
 }

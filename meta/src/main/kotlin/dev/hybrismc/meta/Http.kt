@@ -40,9 +40,8 @@ suspend inline fun <reified T : Any> HttpClient.fetch(url: String) = get(url).bo
 suspend fun HttpClient.fetchVersionManifest(): VersionManifest =
     fetch("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")
 
-suspend fun HttpClient.fetchVersion(version: String): VersionEntry? {
-    val versionManifest = fetchVersionManifest()
-    val versionInfo = versionManifest.versions.find { it.id == version } ?: return null
+suspend fun HttpClient.fetchVersion(version: String, manifest: VersionManifest? = null): VersionEntry? {
+    val versionInfo = (manifest ?: fetchVersionManifest()).versions.find { it.id == version } ?: return null
     return fetch(versionInfo.url)
 }
 

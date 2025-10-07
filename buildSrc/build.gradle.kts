@@ -9,8 +9,8 @@ repositories {
 }
 
 dependencies {
-    implementation("org.jetbrains.kotlin:kotlin-gradle-plugin:1.8.20")
-    implementation("org.jetbrains.kotlin:kotlin-serialization:1.8.20")
+    implementation("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.0")
+    implementation("org.jetbrains.kotlin:kotlin-serialization:1.9.0")
     implementation("dev.hybrismc:meta")
 }
 
